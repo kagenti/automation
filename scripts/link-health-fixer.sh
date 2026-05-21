@@ -5,6 +5,11 @@ set -euo pipefail
 # Reads scanner-created issues, re-verifies broken links, attempts fixes for internal links.
 # Outputs PR previews in dry-run mode; creates fork-based PRs when --live is passed.
 
+# --- Load shared library ---
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/program-lib.sh"
+
 # --- Configuration ---
 REPOS_DIR="${REPOS_DIR:-$HOME/kagenti}"
 REPORTS_DIR="${REPORTS_DIR:-$HOME/workspaces/clawgenti/reports/link-scan}"
@@ -35,18 +40,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-TMPDIR=$(mktemp -d /tmp/link-fixer-XXXXXX)
-trap 'rm -rf "$TMPDIR"' EXIT
-
-# Check if an issue already has an open PR from clawgenti that references it.
-# Returns 0 (true) if a PR exists, 1 (false) otherwise.
-issue_has_open_pr() {
-  local repo="$1" issue_number="$2"
-  local pr_count
-  pr_count=$(gh pr list --repo "$repo" --author "$FORK_OWNER" --state open \
-    --search "Closes #$issue_number" --json number --jq 'length' 2>/dev/null || echo "0")
-  [ "$pr_count" -gt 0 ]
-}
+# --- Workspace setup ---
+setup_workspace "link-fixer"
+TMPDIR="$PROGRAM_TMPDIR"
 
 echo "=== Link Health Fixer $FIX_DATE ==="
 echo "Repos dir: $REPOS_DIR"
@@ -166,7 +162,7 @@ while IFS= read -r item; do
   broken_url=$(echo "$item" | jq -r '.url')
 
   # Skip issues that already have an open fix PR (don't count toward limit)
-  if issue_has_open_pr "$repo" "$number"; then
+  if issue_has_open_pr "$repo" "$number" "$FORK_OWNER"; then
     echo "  #$number: Open PR already exists, skipping"
     continue
   fi
@@ -184,12 +180,9 @@ while IFS= read -r item; do
       --jq '.name' >/dev/null 2>&1; then
       echo "  #$number: Link now resolves ($broken_url)"
 
-      if gh issue close "$number" --repo "$repo" \
-        --comment "Link now resolves as of $SCAN_DATE. Verified by Link Health Fixer. Closing." \
-        2>/dev/null; then
+      if close_issue_if_valid "$repo" "$number" \
+        "Link now resolves as of $SCAN_DATE. Verified by Link Health Fixer. Closing."; then
         echo "  #$number: Issue closed"
-      else
-        echo "  WARN: Failed to close issue #$number (gh issue close returned non-zero)"
       fi
 
       echo "$item" >> "$REVERIFIED"
@@ -230,7 +223,7 @@ while IFS= read -r item; do
   broken_url=$(echo "$item" | jq -r '.url')
 
   # Skip issues that already have an open fix PR
-  if issue_has_open_pr "$repo" "$number"; then
+  if issue_has_open_pr "$repo" "$number" "$FORK_OWNER"; then
     echo "  #$number: Open PR already exists, skipping"
     continue
   fi
@@ -435,15 +428,8 @@ else
       # --- LIVE MODE ---
       cd "$fix_repo_dir"
 
-      # Fork on demand
-      if ! gh repo view "$FORK_OWNER/$fix_repo" &>/dev/null 2>&1; then
-        echo "  Forking $ORG/$fix_repo..."
-        gh repo fork "$ORG/$fix_repo" --clone=false 2>/dev/null || {
-          echo "  WARN: Failed to fork $ORG/$fix_repo, skipping"
-          continue
-        }
-        sleep 2
-      fi
+      # Fork on demand (uses shared library)
+      ensure_fork "$ORG" "$fix_repo" "$FORK_OWNER"
 
       # Set up remote
       FORK_REMOTE="clawgenti-${fix_repo}-fork"
@@ -545,7 +531,7 @@ while IFS= read -r item; do
   source_file=$(echo "$item" | jq -r '.file')
 
   # Skip issues that already have an open fix PR (don't count toward limit)
-  if issue_has_open_pr "$repo" "$number"; then
+  if issue_has_open_pr "$repo" "$number" "$FORK_OWNER"; then
     echo "  #$number: Open PR already exists, skipping"
     continue
   fi
@@ -561,12 +547,9 @@ while IFS= read -r item; do
     if [ "$final_url" = "$broken_url" ]; then
       # Link resolves at same URL -- close the issue
       echo "    Link now resolves (200 at original URL)"
-      if gh issue close "$number" --repo "$repo" \
-        --comment "Link now resolves as of $FIX_DATE. Verified by Link Health Fixer. Closing." \
-        2>/dev/null; then
+      if close_issue_if_valid "$repo" "$number" \
+        "Link now resolves as of $FIX_DATE. Verified by Link Health Fixer. Closing."; then
         echo "    Issue closed"
-      else
-        echo "    WARN: Failed to close issue #$number"
       fi
       EXTERNAL_REVERIFIED=$((EXTERNAL_REVERIFIED + 1))
       EXTERNAL_PROCESSED=$((EXTERNAL_PROCESSED + 1))

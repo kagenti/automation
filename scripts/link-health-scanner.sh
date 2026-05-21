@@ -12,6 +12,11 @@ set -euo pipefail
 #   bash link-health-scanner.sh --dry-run --issue-limit 3  # combined
 # =============================================================================
 
+# --- Load shared library ---
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/program-lib.sh"
+
 # --- CLI args ---
 DRY_RUN=false
 ISSUE_LIMIT=0  # 0 = unlimited
@@ -35,26 +40,19 @@ SCAN_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 MAX_HISTORY_ROWS=500
 ESCALATION_THRESHOLD=20
 
-# Determine scan_id (YYYY-MM-DD-NNN)
-if [ -f "$REPORTS_DIR/history.json" ]; then
-  LAST_SEQ=$(jq -r "[.[] | select(.scan_id | startswith(\"$SCAN_DATE\"))] | length" "$REPORTS_DIR/history.json")
-else
-  LAST_SEQ=0
-fi
-SCAN_ID=$(printf "%s-%03d" "$SCAN_DATE" $((LAST_SEQ + 1)))
+# --- Workspace setup ---
+setup_workspace "link-scanner"
+TMPDIR="$PROGRAM_TMPDIR"
+mkdir -p "$REPORTS_DIR"
+
+# --- Scan ID ---
+SCAN_ID=$(generate_scan_id "$REPORTS_DIR" "$SCAN_DATE")
 
 echo "=== Link Health Scan $SCAN_ID ==="
 echo "Repos dir: $REPOS_DIR"
 echo "Reports dir: $REPORTS_DIR"
 if [ "$DRY_RUN" = true ]; then echo "Mode: DRY RUN (no issues, no PRs)"; fi
 if [ "$ISSUE_LIMIT" -gt 0 ]; then echo "Issue limit: $ISSUE_LIMIT"; fi
-
-# --- Ensure reports dir exists ---
-mkdir -p "$REPORTS_DIR"
-
-# --- Temp workspace ---
-TMPDIR=$(mktemp -d)
-trap 'rm -rf "$TMPDIR"' EXIT
 
 # --- Scan all repos ---
 TOTAL_LINKS=0
@@ -146,24 +144,11 @@ else
   : > "$PREV_BROKEN"
 fi
 
-# --- Compute diff ---
-# Key = repo|file|url
-sort_key() {
-  jq -r '[.repo, .file, .url] | join("|")' | sort
-}
-
-# Current keys
-jq -c '.' "$TMPDIR/broken.jsonl" | sort_key > "$TMPDIR/current_keys.txt"
-
-# Previous keys
-jq -c '.' "$PREV_BROKEN" | sort_key > "$TMPDIR/prev_keys.txt"
-
-# New = in current but not in previous
-NEW_LINKS=$(comm -23 "$TMPDIR/current_keys.txt" "$TMPDIR/prev_keys.txt" | wc -l | tr -d ' ')
-# Fixed = in previous but not in current
-FIXED_LINKS=$(comm -13 "$TMPDIR/current_keys.txt" "$TMPDIR/prev_keys.txt" | wc -l | tr -d ' ')
-# Recurring = in both
-RECURRING_LINKS=$(comm -12 "$TMPDIR/current_keys.txt" "$TMPDIR/prev_keys.txt" | wc -l | tr -d ' ')
+# --- Compute diff using shared library ---
+DIFF_KEY='[.repo, .file, .url] | join("|")'
+read -r NEW_LINKS FIXED_LINKS RECURRING_LINKS < <(
+  diff_against_previous "$TMPDIR/broken.jsonl" "$PREV_BROKEN" "$DIFF_KEY"
+)
 
 echo "Delta: +$NEW_LINKS new, -$FIXED_LINKS fixed, $RECURRING_LINKS recurring"
 
@@ -174,8 +159,7 @@ BROKEN_EXTERNAL=$(jq -s '[.[] | select(.category == "external")] | length' "$TMP
 # --- Create GitHub issues for NEW broken links ---
 ISSUES_CREATED=0
 
-# Get new keys
-comm -23 "$TMPDIR/current_keys.txt" "$TMPDIR/prev_keys.txt" > "$TMPDIR/new_keys.txt"
+# new_keys.txt was already written by diff_against_previous
 
 while IFS='|' read -r issue_repo issue_file issue_url; do
   [ -z "$issue_repo" ] && continue
@@ -198,13 +182,10 @@ while IFS='|' read -r issue_repo issue_file issue_url; do
     category_label="broken-link/external"
   fi
 
-  # Check for existing issue
-  existing=$(gh issue list --repo "$issue_repo" \
-    --label "$category_label" \
-    --search "Broken link in $issue_file: $issue_url" \
-    --state open --json number --jq '.[0].number' 2>/dev/null || echo "")
+  # Deduplication: skip if an open issue already exists for this link
+  existing=$(gh_issue_exists "$issue_repo" "Broken link in $issue_file: $issue_url" || true)
 
-  if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+  if [ -n "$existing" ]; then
     echo "  Issue #$existing already exists for $issue_file:$issue_url"
     continue
   fi
@@ -290,20 +271,21 @@ while IFS='|' read -r fix_repo fix_file fix_url; do
     category_label="broken-link/external"
   fi
 
-  issue_number=$(gh issue list --repo "$fix_repo" \
-    --label "$category_label" \
-    --search "Broken link in $fix_file: $fix_url" \
-    --state open --json number --jq '.[0].number' 2>/dev/null || echo "")
+  # Find the open issue for this link (empty string if none exists)
+  issue_number=$(gh_issue_exists "$fix_repo" "Broken link in $fix_file: $fix_url" || true)
 
-  if [ -n "$issue_number" ] && [ "$issue_number" != "null" ]; then
-    if [ "$DRY_RUN" = true ]; then
-      echo "  [DRY RUN] Would close issue #$issue_number for $fix_file:$fix_url"
-      ISSUES_CLOSED=$((ISSUES_CLOSED + 1))
-    elif gh issue close "$issue_number" --repo "$fix_repo" \
-      --comment "Link verified as fixed in scan $SCAN_ID ($SCAN_DATE). Auto-closing." 2>/dev/null; then
-      ISSUES_CLOSED=$((ISSUES_CLOSED + 1))
-      echo "  Closed issue #$issue_number for $fix_file:$fix_url"
-    fi
+  # Skip if no matching issue was found
+  if [ -z "$issue_number" ]; then
+    continue
+  fi
+
+  if [ "$DRY_RUN" = true ]; then
+    echo "  [DRY RUN] Would close issue #$issue_number for $fix_file:$fix_url"
+    ISSUES_CLOSED=$((ISSUES_CLOSED + 1))
+  elif close_issue_if_valid "$fix_repo" "$issue_number" \
+    "Link verified as fixed in scan $SCAN_ID ($SCAN_DATE). Auto-closing."; then
+    ISSUES_CLOSED=$((ISSUES_CLOSED + 1))
+    echo "  Closed issue #$issue_number for $fix_file:$fix_url"
   fi
 done < "$TMPDIR/fixed_keys.txt"
 
@@ -318,7 +300,7 @@ BROKEN_ARRAY=$(jq -s '
   }]
 ' "$TMPDIR/broken.jsonl" 2>/dev/null || echo "[]")
 
-cat > "$REPORTS_DIR/latest.json" << LATEST_EOF
+LATEST_JSON=$(cat << LATEST_EOF
 {
   "scan_id": "$SCAN_ID",
   "date": "$SCAN_TIME",
@@ -335,7 +317,9 @@ cat > "$REPORTS_DIR/latest.json" << LATEST_EOF
   }
 }
 LATEST_EOF
+)
 
+write_report_latest "$REPORTS_DIR" "$LATEST_JSON"
 echo "Wrote latest.json"
 
 # --- Append to history.json ---
@@ -355,14 +339,7 @@ HISTORY_ROW=$(cat << HIST_EOF
 HIST_EOF
 )
 
-if [ -f "$REPORTS_DIR/history.json" ] && [ -s "$REPORTS_DIR/history.json" ]; then
-  jq --argjson row "$HISTORY_ROW" '. + [$row] | if length > '"$MAX_HISTORY_ROWS"' then .[-'"$MAX_HISTORY_ROWS"':] else . end' \
-    "$REPORTS_DIR/history.json" > "$TMPDIR/history_new.json"
-  mv "$TMPDIR/history_new.json" "$REPORTS_DIR/history.json"
-else
-  echo "[$HISTORY_ROW]" > "$REPORTS_DIR/history.json"
-fi
-
+append_history_row "$REPORTS_DIR" "$HISTORY_ROW" "$MAX_HISTORY_ROWS"
 echo "Appended to history.json"
 
 # --- Update docs/link-health.md ---
