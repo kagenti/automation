@@ -53,6 +53,120 @@ generate_scan_id() {
 }
 
 # =============================================================================
+# PATH VALIDATION
+# =============================================================================
+
+# Validate that REPOS_DIR is set and not pointing to a dangerous path.
+# Rejects root filesystem paths, system directories, and $HOME itself
+# (without a subdirectory). Intended to prevent accidental scanning or
+# modification of system files.
+#
+# Usage: validate_repos_dir "$REPOS_DIR"
+# Args:
+#   $1 - the repos directory path to validate
+# Returns: 0 if valid, exits with error message if invalid
+validate_repos_dir() {
+  local path="$1"
+
+  if [ -z "$path" ]; then
+    echo "ERROR: REPOS_DIR is not set." >&2
+    echo "Export it to the directory containing your org's cloned repos:" >&2
+    echo "  export REPOS_DIR=~/my-org" >&2
+    exit 1
+  fi
+
+  # Resolve to absolute path for comparison
+  local resolved
+  resolved=$(cd "$path" 2>/dev/null && pwd) || resolved="$path"
+
+  # Reject obviously dangerous paths
+  local dangerous_paths=("/" "/etc" "/usr" "/var" "/sys" "/proc" "/bin" "/sbin" "/lib" "/tmp")
+  for dangerous in "${dangerous_paths[@]}"; do
+    if [ "$resolved" = "$dangerous" ]; then
+      echo "ERROR: REPOS_DIR cannot be '$resolved' -- this is a system directory." >&2
+      exit 1
+    fi
+  done
+
+  # Reject $HOME itself (must be a subdirectory)
+  if [ "$resolved" = "$HOME" ]; then
+    echo "ERROR: REPOS_DIR cannot be your home directory itself." >&2
+    echo "Use a subdirectory, e.g.: export REPOS_DIR=~/my-org" >&2
+    exit 1
+  fi
+
+  # Check the directory exists
+  if [ ! -d "$path" ]; then
+    echo "ERROR: REPOS_DIR '$path' does not exist." >&2
+    echo "Create it and clone your org's repos there, or set REPOS_DIR to an existing directory." >&2
+    exit 1
+  fi
+
+  return 0
+}
+
+# =============================================================================
+# ISSUE BODY VALIDATION
+# =============================================================================
+
+# Validate fields extracted from a scanner-created issue body.
+# Returns 0 if all fields pass validation, 1 if any field is malformed.
+# This prevents injection via crafted issue bodies.
+#
+# Usage:
+#   if ! validate_issue_fields "$issue_repo" "$issue_file" "$broken_url" "$http_status" "$category"; then
+#     echo "WARN: Skipping issue with malformed fields"
+#     continue
+#   fi
+#
+# Args:
+#   $1 - repo field (expected: org/repo format)
+#   $2 - file field (expected: relative path, no ..)
+#   $3 - url field (expected: http:// or https://)
+#   $4 - status field (expected: numeric or known text)
+#   $5 - category field (expected: internal, external, or relative)
+# Returns: 0 if valid, 1 if any field fails (prints warning to stderr)
+validate_issue_fields() {
+  local repo="$1"
+  local file="$2"
+  local url="$3"
+  local status="$4"
+  local category="$5"
+
+  # Repo must match org/repo pattern
+  if ! echo "$repo" | grep -qE '^[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+$'; then
+    echo "  WARN: Invalid repo field: '$repo'" >&2
+    return 1
+  fi
+
+  # File must not contain path traversal or shell metacharacters
+  if echo "$file" | grep -qE '(\.\./|[;$`|&<>])'; then
+    echo "  WARN: Invalid file field (contains unsafe characters): '$file'" >&2
+    return 1
+  fi
+
+  # URL must start with http:// or https://
+  if ! echo "$url" | grep -qE '^https?://'; then
+    echo "  WARN: Invalid URL field (not http/https): '$url'" >&2
+    return 1
+  fi
+
+  # Status must be numeric or a known text value
+  if ! echo "$status" | grep -qE '^([0-9]{3}|unknown|timeout|error)$'; then
+    echo "  WARN: Invalid status field: '$status'" >&2
+    return 1
+  fi
+
+  # Category must be a known value
+  if ! echo "$category" | grep -qE '^(internal|external|relative)$'; then
+    echo "  WARN: Invalid category field: '$category'" >&2
+    return 1
+  fi
+
+  return 0
+}
+
+# =============================================================================
 # DIFF LOGIC
 # =============================================================================
 
