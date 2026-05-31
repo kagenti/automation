@@ -22,6 +22,6 @@
 ### Operational Notes
 - Cron job: `dep-bump-scanner` (Tue/Thu 7am ET, isolated)
 - Reports: `reports/dep-bump/latest.json` and `reports/dep-bump/history.json`
-- Labels: `dep-bump/stale`
+- Issue prefix: `[dep-bump]` (used for discovery; no labels required)
 - Manual run: `openclaw cron run dep-bump-scanner`
 - Epic: kagenti/kagenti#1260
