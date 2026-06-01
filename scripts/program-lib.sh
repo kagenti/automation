@@ -470,12 +470,14 @@ issue_has_open_pr() {
 # Args:
 #   $1 - path to the reports directory
 #   $2 - JSON content to write (as a string)
+#   $3 - (optional) filename (default: "latest.json")
 write_report_latest() {
   local reports_dir="$1"
   local content="$2"
+  local filename="${3:-latest.json}"
 
   mkdir -p "$reports_dir"
-  printf '%s\n' "$content" > "$reports_dir/latest.json"
+  printf '%s\n' "$content" > "$reports_dir/$filename"
 }
 
 # Append a row to history.json, keeping the file under a maximum row count.
@@ -484,19 +486,22 @@ write_report_latest() {
 #
 # Usage:
 #   append_history_row "$REPORTS_DIR" "$history_row_json" 500
+#   append_history_row "$REPORTS_DIR" "$row" 500 "fixer-history.json"
 #
 # Args:
 #   $1 - path to the reports directory
 #   $2 - JSON object to append (as a string, e.g., '{"scan_id":"...","date":"..."}')
 #   $3 - maximum number of rows to keep (default: 500)
+#   $4 - (optional) filename (default: "history.json")
 append_history_row() {
   local reports_dir="$1"
   local row="$2"
   local max_rows="${3:-500}"
+  local filename="${4:-history.json}"
 
   mkdir -p "$reports_dir"
 
-  local history_file="$reports_dir/history.json"
+  local history_file="$reports_dir/$filename"
 
   # If history file exists and is non-empty, append and trim
   if [ -f "$history_file" ] && [ -s "$history_file" ]; then
