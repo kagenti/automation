@@ -19,9 +19,26 @@
 - Do not create duplicate issues (check for existing issue with same repo + package)
 - Do not create issues for PRs within their SLA window
 
-### Operational Notes
-- Cron job: `dep-bump-scanner` (Tue/Thu 7am ET, isolated)
+### Operational Notes — Scanner
+- Cron job: `dep-bump-scanner` (Tue/Thu 10am ET / 14:00 UTC, isolated)
 - Reports: `reports/dep-bump/latest.json` and `reports/dep-bump/history.json`
 - Issue prefix: `[dep-bump]` (used for discovery; no labels required)
 - Manual run: `openclaw cron run dep-bump-scanner`
-- Epic: kagenti/kagenti#1260
+
+### Operational Notes — Fixer
+- Cron job: `dep-bump-fixer` (Tue/Thu 12pm ET / 16:00 UTC, isolated — 2h after scanner)
+- Reports: `reports/dep-bump/fixer-latest.json`, `reports/dep-bump/fixer-history.json`, `reports/dep-bump/baseline.json`
+- Fixer signature: `_Automated analysis by Kagenti Dep Bump Fixer_`
+- Manual run: `openclaw cron run dep-bump-fixer`
+- The fixer does NOT merge PRs — it comments with analysis to accelerate human decisions
+- Duplicate prevention: checks for existing fixer signature before posting
+
+### Schedule Coordination
+All cron jobs maintain 1h+ separation to avoid crowding Discord:
+- Link-health scanner: Mon/Wed/Fri 11:00 UTC (7am ET)
+- Link-health fixer: Tue/Thu 12:00 UTC (8am ET)
+- Dep-bump scanner: Tue/Thu 14:00 UTC (10am ET)
+- Dep-bump fixer: Tue/Thu 16:00 UTC (12pm ET)
+
+### Epic
+- kagenti/kagenti#1260
