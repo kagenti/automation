@@ -39,6 +39,7 @@ All cron jobs maintain 1h+ separation to avoid crowding Discord:
 - Link-health fixer: Tue/Thu 12:00 UTC (8am ET)
 - Dep-bump scanner: Tue/Thu 14:00 UTC (10am ET)
 - Dep-bump fixer: Tue/Thu 16:00 UTC (12pm ET)
+- Health dashboard: Daily 17:00 UTC (1pm ET)
 
 ### Epic
 - kagenti/kagenti#1260
