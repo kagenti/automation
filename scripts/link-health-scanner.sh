@@ -369,17 +369,33 @@ TREND_TABLE=$(jq -r '
 ' "$REPORTS_DIR/history.json" 2>/dev/null || echo "| - | - | - | - |")
 
 # Build per-repo breakdown with issue counts
+# Single org-wide query for all open scanner issues, then count client-side
+issue_search=$(gh_with_backoff search issues "org:kagenti in:title \"Broken link in\" state:open" --json repository --jq '.[].repository.nameWithOwner' 2>/dev/null || true)
+declare -A ISSUE_COUNTS
+if [ -n "$issue_search" ]; then
+  while IFS= read -r r; do
+    ISSUE_COUNTS["$r"]=$(( ${ISSUE_COUNTS["$r"]:-0} + 1 ))
+  done <<< "$issue_search"
+fi
+
+# Single jq pass for per-repo internal/external counts
 REPO_TABLE=""
-repo_list=$(jq -rs '[.[].repo] | unique | .[]' "$TMPDIR/broken.jsonl" 2>/dev/null || true)
-if [ -n "$repo_list" ]; then
-  while IFS= read -r repo; do
+repo_breakdown=$(jq -rs '
+  group_by(.repo) | .[] |
+  { repo: .[0].repo,
+    internal: [.[] | select(.category == "internal")] | length,
+    external: [.[] | select(.category == "external")] | length }
+' "$TMPDIR/broken.jsonl" 2>/dev/null || true)
+if [ -n "$repo_breakdown" ]; then
+  while IFS= read -r row; do
+    repo=$(echo "$row" | jq -r '.repo')
     short=$(echo "$repo" | cut -d/ -f2)
-    int_count=$(jq -rs --arg r "$repo" '[.[] | select(.repo == $r and .category == "internal")] | length' "$TMPDIR/broken.jsonl")
-    ext_count=$(jq -rs --arg r "$repo" '[.[] | select(.repo == $r and .category == "external")] | length' "$TMPDIR/broken.jsonl")
-    issue_count=$(gh_with_backoff issue list --repo "$repo" --search 'in:title "Broken link in"' --state open --json number --jq 'length' 2>/dev/null || echo "0")
+    int_count=$(echo "$row" | jq -r '.internal')
+    ext_count=$(echo "$row" | jq -r '.external')
+    issue_count=${ISSUE_COUNTS["$repo"]:-0}
     REPO_TABLE="${REPO_TABLE}| ${short} | ${int_count} | ${ext_count} | ${issue_count} |
 "
-  done <<< "$repo_list"
+  done < <(echo "$repo_breakdown" | jq -c '.')
 else
   REPO_TABLE="| - | - | - | - |"
 fi
