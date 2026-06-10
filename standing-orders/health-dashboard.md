@@ -22,12 +22,7 @@
 - Manual run: `openclaw cron run health-dashboard`
 
 ### Schedule Coordination
-All cron jobs maintain 1h+ separation to avoid crowding Discord:
-- Link-health scanner: Mon/Wed/Fri 11:00 UTC (7am ET)
-- Link-health fixer: Tue/Thu 12:00 UTC (8am ET)
-- Dep-bump scanner: Tue/Thu 14:00 UTC (10am ET)
-- Dep-bump fixer: Tue/Thu 16:00 UTC (12pm ET)
-- Health dashboard: Daily 17:00 UTC (1pm ET)
+See [dep-bump.md](dep-bump.md#schedule-coordination) for the full cron schedule grid.
 
 ### Epic
 - kagenti/kagenti#1260
