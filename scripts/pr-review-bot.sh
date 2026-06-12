@@ -52,3 +52,31 @@ fi
 # --- Workspace setup ---
 setup_workspace "pr-review-bot"
 TMPDIR="$PROGRAM_TMPDIR"
+
+# --- Step 1: List labeled PRs across target repos ---
+QUEUE_FILE="$TMPDIR/queue.json"
+echo "[]" > "$QUEUE_FILE"
+
+for repo in "${REPOS[@]}"; do
+  [ "$VERBOSE" = true ] && echo "Checking $repo..." >&2
+
+  prs_json=$(gh pr list --repo "$repo" \
+    --label "$LABEL" \
+    --state open \
+    --json number,author,headRefOid \
+    2>/dev/null || echo "[]")
+
+  # Filter out bot's own PRs
+  filtered=$(echo "$prs_json" | jq -c \
+    --arg bot "$BOT_USER" \
+    '[.[] | select(.author.login != $bot)]')
+
+  count=$(echo "$filtered" | jq 'length')
+  [ "$VERBOSE" = true ] && echo "  Found $count candidate PR(s) (after filtering self)" >&2
+
+  # Add repo field to each PR
+  echo "$filtered" | jq -c \
+    --arg repo "$repo" \
+    '.[] | {repo: $repo, number: .number, head_sha: .headRefOid}' \
+    >> "$TMPDIR/candidates.jsonl"
+done
