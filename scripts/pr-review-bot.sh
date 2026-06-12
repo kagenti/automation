@@ -63,13 +63,13 @@ for repo in "${REPOS[@]}"; do
   prs_json=$(gh pr list --repo "$repo" \
     --label "$LABEL" \
     --state open \
-    --json number,author,headRefOid,isDraft \
+    --json number,author,headRefOid,isDraft,reviewDecision \
     2>/dev/null || echo "[]")
 
-  # Filter out bot's own PRs and drafts
+  # Filter out bot's own PRs, drafts, and already-approved PRs
   filtered=$(echo "$prs_json" | jq -c \
     --arg bot "$BOT_USER" \
-    '[.[] | select(.author.login != $bot) | select(.isDraft == false)]')
+    '[.[] | select(.author.login != $bot) | select(.isDraft == false) | select(.reviewDecision != "APPROVED")]')
 
   count=$(echo "$filtered" | jq 'length')
   [ "$VERBOSE" = true ] && echo "  Found $count candidate PR(s) (after filtering self)" >&2
