@@ -97,9 +97,9 @@ while IFS= read -r candidate; do
 
   [ "$VERBOSE" = true ] && echo "  Checking $repo#$number (HEAD: ${head_sha:0:7})..." >&2
 
-  # Fetch bot's comments on this PR, look for the review marker
+  # Fetch bot's PR reviews, look for the review marker in review body
   last_reviewed_sha=$(gh api \
-    "repos/$repo/issues/$number/comments" \
+    "repos/$repo/pulls/$number/reviews" \
     --paginate \
     --jq ".[] | select(.user.login == \"$BOT_USER\") | select(.body | contains(\"$REVIEW_MARKER\")) | .body" \
     2>/dev/null \
