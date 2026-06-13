@@ -1,23 +1,56 @@
-## Program: PR Review Bot (kagenti org)
+## Program: PR Review (kagenti org)
 
 **Authority:** Review PRs labeled `ready-for-ai-review`, post review comments
-**Trigger:** Every ~15 minutes via OpenClaw cron
-**Model:** azure/gpt-5.3-codex
+**Trigger:** Scanner every 15 min; fixer every 15 min (offset ~5 min)
+**Model:** claude-sonnet-4-6 (fixer only; scanner is bash-only)
 **Identity:** clawgenti (single identity, no switching)
 **Approval gate:** None. Comments only, never blocks merge.
-**Branding:** "Clawgenti Code Review" (may change to "Rossoclaw Review")
+**Branding:** "Clawgenti Code Review"
 **Tracking:** kagenti/kagenti#1910
 
 ### Scope
 - Repositories: kagenti/kagenti, kagenti/kagenti-extensions (initial rollout)
 - Only open PRs with the `ready-for-ai-review` label
-- Uses the `github:pr-review` skill (hardened per PR #1898)
+- Uses the `github:pr-review` skill
+
+### Architecture: Scanner/Fixer Pattern
+
+| | Scanner | Fixer |
+|---|---|---|
+| **Script** | `pr-review-scanner.sh` | `pr-review-fixer.sh` |
+| **Runs as** | Bash (no LLM) | Agent turn (LLM-driven) |
+| **Input** | GitHub API (labels, PRs, reviews) | `reports/pr-review/latest.json` |
+| **Output** | `latest.json` + `state.json` + `history.json` | PR review comment via GitHub API |
+| **Idempotency** | State file prevents re-queuing | `<!-- reviewed: SHA -->` marker |
+
+### State Machine
+
+PRs move through internal states tracked in `reports/pr-review/state.json`:
+
+```
+[not tracked] → eligible → in_progress → reviewed
+                  ↑                          |
+                  └──── new commits pushed ──┘
+```
+
+- **eligible**: Scanner found the PR (has label, not draft, not approved, not self-authored, no matching SHA)
+- **in_progress**: Fixer claimed it (prevents duplicate work across overlapping cycles)
+- **reviewed**: Fixer posted the review (SHA recorded)
+- **re-eligible**: New commits pushed (HEAD SHA no longer matches state)
+
+### Eviction Rules
+
+Entries are removed from state when:
+- PR is merged or closed (no longer open)
+- `ready-for-ai-review` label is removed (human opt-out)
+- Entry exceeds 30-day TTL (safety net)
+- `in_progress` entry exceeds 30 minutes (stale fixer run, recycle)
 
 ### Behavior
 
 **Review verdicts:**
-- Issues found: post comment with inline findings (must-fix, suggestion, nit). Label stays so bot re-reviews after new commits are pushed.
-- No issues: post comment with clear verdict: "Clawgenti Code Review: No issues found. Ready for human review."
+- Issues found: post review with inline findings (must-fix, suggestion, nit)
+- No issues: post review with "All checks pass. Ready for human review."
 
 **Label management:** None. Humans add/remove all labels.
 - `ready-for-ai-review` — author adds when ready for AI pass; removes to opt out
@@ -27,12 +60,9 @@
 - Skip draft PRs
 - Skip PRs authored by clawgenti (no self-review)
 - Skip PRs already approved (reviewDecision == APPROVED)
-- Skip PRs where no new commits exist since last bot review (detected via `<!-- reviewed: SHA -->` HTML comment in bot's last review comment)
-- If PR has new commits since last review, re-review
-
-**Human control:**
-- Remove `ready-for-ai-review` at any time to stop AI reviews
-- Re-add label to request another pass after changes
+- Skip PRs in `state.reviewed` with matching SHA
+- Skip PRs in `state.in_progress` (fixer is working on them)
+- Fallback: check `<!-- reviewed: SHA -->` via PR reviews API
 
 ### What NOT to Do
 - Do not submit REQUEST_CHANGES or APPROVE reviews (COMMENT type only)
@@ -42,26 +72,29 @@
 
 ### Components
 
-**Discovery script** (`~/workspaces/clawgenti/scripts/pr-review-bot.sh`):
-- Deterministic bash; iterates repos, filters by label/author/SHA
-- Outputs JSON queue of eligible PRs
+**Scanner** (`pr-review-scanner.sh`):
+- Deterministic bash; iterates repos, filters by label/author/draft/approved/SHA
+- Manages state eviction (closed PRs, removed labels, TTL)
+- Writes `latest.json`, `state.json`, `history.json`
+- Outputs JSON queue to stdout (backward compatible)
 
-**Cron job** (`pr-review-bot`):
-- `agentTurn` message to clawgenti
-- Runs discovery script, then reviews each eligible PR using `github:pr-review` skill
-- Posts review comment with `<!-- reviewed: <SHA> -->` footer
+**Fixer** (`pr-review-fixer.sh`):
+- Two modes: `begin` (mark in_progress, output queue) and `finalize` (confirm reviews, update state)
+- Agent reviews PRs between begin and finalize calls
+- Writes `fixer-history.json`
 
-### Comment Format
+**Cron jobs:**
+- `pr-review-scanner`: bash-only, no LLM cost
+- `pr-review-fixer`: agent turn using `github:pr-review` skill
 
-```markdown
-## Clawgenti Code Review
+### Reports
 
-<findings from github:pr-review skill>
-
----
-*Reviewed by clawgenti using github:pr-review*
-<!-- reviewed: <head-SHA> -->
-```
+| File | Lifecycle |
+|---|---|
+| `latest.json` | Overwritten each scanner run |
+| `history.json` | Append-only, capped at 500 rows |
+| `state.json` | Managed by scanner (eviction) and fixer (transitions) |
+| `fixer-history.json` | Append-only, capped at 500 rows |
 
 ### Permissions
 - Repos are public; no collaborator/triage role needed
@@ -69,16 +102,16 @@
 - Only permission exercised: posting PR review comments via API
 
 ### Security Considerations
-- Skill includes supply-chain hardening (PR #1898): flags PRs touching `.claude/`, `.vscode/` configs
+- Skill includes supply-chain hardening: flags PRs touching `.claude/`, `.vscode/` configs
 - Read-only analysis; no code from reviewed PRs is executed
 - PAT never exposed in comments or logs
 
 ### Error Handling
-- Zero eligible PRs: report and exit cleanly
-- Review failure mid-queue: report which PRs succeeded/failed; failed PRs lack SHA marker and retry next cycle
+- Zero eligible PRs: scanner reports and exits cleanly; fixer outputs NO_REPLY
+- Review failure mid-queue: failed PRs stay in `in_progress`, recycled after 30 min
 - Timeout: 1200s (20 min)
 
 ### Schedule
-- Cron job: `pr-review-bot` (every 15 minutes, isolated session)
-- Manual run: `openclaw cron run pr-review-bot`
-- No conflict with existing jobs (lightweight comment-only API usage)
+- Scanner: every 15 minutes (lightweight, no LLM)
+- Fixer: every 15 minutes, offset ~5 min from scanner
+- Manual run: `openclaw cron run pr-review-scanner` / `openclaw cron run pr-review-fixer`
