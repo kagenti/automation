@@ -53,6 +53,126 @@ generate_scan_id() {
 }
 
 # =============================================================================
+# PORTABLE DATE UTILITIES
+# =============================================================================
+
+# Convert an ISO 8601 timestamp (YYYY-MM-DDTHH:MM:SSZ) to Unix epoch seconds.
+# Works on both macOS (BSD date) and Linux (GNU date), with a pure-awk fallback
+# that requires no external language runtime. Returns 0 on parse failure.
+#
+# Usage: epoch=$(iso_to_epoch "2026-06-12T14:00:00Z")
+# Args:
+#   $1 - ISO 8601 timestamp string (must end in Z for UTC)
+# Prints: Unix epoch seconds (integer)
+iso_to_epoch() {
+  local timestamp="$1"
+
+  if [ -z "$timestamp" ]; then
+    echo "0"
+    return
+  fi
+
+  # Try GNU date first (Linux)
+  local epoch
+  epoch=$(date -d "$timestamp" +%s 2>/dev/null) && { echo "$epoch"; return; }
+
+  # Try BSD date (macOS) — TZ=UTC ensures the Z suffix is honored
+  epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$timestamp" +%s 2>/dev/null) && { echo "$epoch"; return; }
+
+  # Fallback: pure awk (no external dependencies beyond POSIX)
+  # Parses YYYY-MM-DDTHH:MM:SSZ and computes epoch via day-counting arithmetic.
+  epoch=$(echo "$timestamp" | awk -F'[-T:Z]' '{
+    if (NF < 6) { print 0; exit }
+    y = $1 + 0; m = $2 + 0; d = $3 + 0
+    H = $4 + 0; M = $5 + 0; S = $6 + 0
+
+    # Days in each month (non-leap)
+    split("31,28,31,30,31,30,31,31,30,31,30,31", mdays, ",")
+
+    # Count days from 1970-01-01
+    days = 0
+    for (yr = 1970; yr < y; yr++) {
+      days += 365
+      if (yr % 4 == 0 && (yr % 100 != 0 || yr % 400 == 0)) days++
+    }
+    for (mo = 1; mo < m; mo++) {
+      days += mdays[mo] + 0
+      if (mo == 2 && y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)) days++
+    }
+    days += d - 1
+
+    print (days * 86400) + (H * 3600) + (M * 60) + S
+  }' 2>/dev/null) && { echo "$epoch"; return; }
+
+  echo "0"
+}
+
+# Write a file atomically using a temp file and mv.
+# Unlike write_report_latest, this takes a source file path (not content string),
+# avoiding argument-length limits for large files.
+#
+# Usage: atomic_write_file "$TMPDIR/state.json" "$REPORTS_DIR/state.json"
+# Args:
+#   $1 - source file path (contents to write)
+#   $2 - destination file path
+atomic_write_file() {
+  local src="$1"
+  local dst="$2"
+  local tmp="${dst}.tmp.$$"
+
+  cp "$src" "$tmp"
+  mv "$tmp" "$dst"
+}
+
+# =============================================================================
+# JSON SCHEMA VALIDATION
+# =============================================================================
+
+# Validate that a JSON file matches an expected structure.
+# Uses jq to check that required top-level keys exist and are arrays.
+# On failure, prints a warning and resets the file to the provided default.
+#
+# Usage:
+#   validate_json_schema "$STATE_FILE" \
+#     '(.in_progress | type) == "array" and (.reviewed | type) == "array"' \
+#     '{"in_progress": [], "reviewed": []}'
+#
+# Args:
+#   $1 - path to the JSON file
+#   $2 - jq boolean expression that must return true for valid files
+#   $3 - default JSON content to write if validation fails
+# Returns: 0 if valid (or reset succeeded), 1 if file cannot be written
+validate_json_schema() {
+  local file="$1"
+  local check_expr="$2"
+  local default_content="$3"
+
+  # File does not exist: write default
+  if [ ! -f "$file" ]; then
+    printf '%s\n' "$default_content" > "$file"
+    return 0
+  fi
+
+  # File is not valid JSON: reset
+  if ! jq empty "$file" 2>/dev/null; then
+    echo "WARN: $file is not valid JSON, resetting to default." >&2
+    printf '%s\n' "$default_content" > "$file"
+    return 0
+  fi
+
+  # File does not pass schema check: reset
+  local valid
+  valid=$(jq -r "$check_expr" "$file" 2>/dev/null || echo "false")
+  if [ "$valid" != "true" ]; then
+    echo "WARN: $file failed schema validation, resetting to default." >&2
+    printf '%s\n' "$default_content" > "$file"
+    return 0
+  fi
+
+  return 0
+}
+
+# =============================================================================
 # PATH VALIDATION
 # =============================================================================
 
