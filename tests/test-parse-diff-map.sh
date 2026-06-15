@@ -152,8 +152,68 @@ EOF
 run_test "quotes escaped" "$TMPDIR/special.diff" '.[0].hunks[0].lines[1].content | contains("quotes")' 'true'
 run_test "backslash escaped" "$TMPDIR/special.diff" '.[0].hunks[0].lines[1].content | contains("\\")' 'true'
 
-# --- Test 7: stdin input ---
-echo "Test 7: Stdin input"
+# --- Test 7: Deleted file (standalone) ---
+echo "Test 7: Deleted file"
+cat > "$TMPDIR/deleted.diff" << 'EOF'
+diff --git a/removed.txt b/removed.txt
+deleted file mode 100644
+index 1234567..0000000
+--- a/removed.txt
++++ /dev/null
+@@ -1,3 +0,0 @@
+-line one
+-line two
+-line three
+EOF
+
+run_test "deleted file count" "$TMPDIR/deleted.diff" 'length' '1'
+run_test "deleted file path" "$TMPDIR/deleted.diff" '.[0].path' 'removed.txt'
+run_test "deleted file hunk count" "$TMPDIR/deleted.diff" '.[0].hunks | length' '1'
+run_test "deleted file line count" "$TMPDIR/deleted.diff" '.[0].hunks[0].lines | length' '3'
+run_test "deleted file line side" "$TMPDIR/deleted.diff" '.[0].hunks[0].lines[0].side' 'LEFT'
+run_test "deleted file line type" "$TMPDIR/deleted.diff" '.[0].hunks[0].lines[0].type' 'removed'
+run_test "deleted file line number" "$TMPDIR/deleted.diff" '.[0].hunks[0].lines[0].line' '1'
+run_test "deleted file valid JSON" "$TMPDIR/deleted.diff" '. | type' 'array'
+
+# --- Test 8: Deleted file in multi-file diff ---
+echo "Test 8: Multi-file with deleted file"
+cat > "$TMPDIR/multi-with-delete.diff" << 'EOF'
+diff --git a/keep.txt b/keep.txt
+index 1234567..abcdef0 100644
+--- a/keep.txt
++++ b/keep.txt
+@@ -1,2 +1,3 @@
+ existing
++new line
+ more existing
+diff --git a/gone.txt b/gone.txt
+deleted file mode 100644
+index abcdef0..0000000
+--- a/gone.txt
++++ /dev/null
+@@ -1,2 +0,0 @@
+-old content
+-more old content
+diff --git a/also-keep.txt b/also-keep.txt
+index 1234567..abcdef0 100644
+--- a/also-keep.txt
++++ b/also-keep.txt
+@@ -5,2 +5,3 @@
+ five
++five point five
+ six
+EOF
+
+run_test "multi-delete file count" "$TMPDIR/multi-with-delete.diff" 'length' '3'
+run_test "multi-delete first path" "$TMPDIR/multi-with-delete.diff" '.[0].path' 'keep.txt'
+run_test "multi-delete second path" "$TMPDIR/multi-with-delete.diff" '.[1].path' 'gone.txt'
+run_test "multi-delete third path" "$TMPDIR/multi-with-delete.diff" '.[2].path' 'also-keep.txt'
+run_test "multi-delete second file lines" "$TMPDIR/multi-with-delete.diff" '.[1].hunks[0].lines | length' '2'
+run_test "multi-delete valid JSON" "$TMPDIR/multi-with-delete.diff" '. | type' 'array'
+run_test "multi-delete third file line" "$TMPDIR/multi-with-delete.diff" '.[2].hunks[0].lines[1].content' 'five point five'
+
+# --- Test 9: stdin input ---
+echo "Test 9: Stdin input"
 STDIN_OUTPUT=$(cat "$TMPDIR/added.diff" | "$PARSER" -)
 STDIN_COUNT=$(echo "$STDIN_OUTPUT" | jq 'length')
 if [ "$STDIN_COUNT" = "1" ]; then
@@ -164,8 +224,8 @@ else
   FAIL=$((FAIL + 1))
 fi
 
-# --- Test 8: Valid JSON output (parse without error) ---
-echo "Test 8: Output is valid JSON"
+# --- Test 10: Valid JSON output (parse without error) ---
+echo "Test 10: Output is valid JSON"
 if echo "$STDIN_OUTPUT" | jq empty 2>/dev/null; then
   echo "  PASS: output is valid JSON"
   PASS=$((PASS + 1))

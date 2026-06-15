@@ -74,20 +74,28 @@ BEGIN {
 # New file boundary: "diff --git a/... b/..."
 /^diff --git/ {
   if (in_hunk) {
-    # Close the current hunk
     printf "]}"
     in_hunk = 0
   }
   if (started_file) {
-    # Close the current file hunks array and file object
     printf "]}"
   }
   started_file = 0
   first_hunk = 1
+  src_path = ""
   next
 }
 
-# File path from the +++ line (destination side)
+# Source path from --- line (used as fallback for deleted files)
+/^--- a\// {
+  src_path = substr($0, 7)
+  next
+}
+
+# Skip other --- lines (e.g. "--- /dev/null" for new files)
+/^--- / { next }
+
+# File path from +++ line (destination side)
 /^\+\+\+ b\// {
   path = substr($0, 7)
   if (!first_file) printf ","
@@ -97,8 +105,16 @@ BEGIN {
   next
 }
 
-# Skip the --- line (source side, not needed for output)
-/^--- / { next }
+# Deleted file: +++ /dev/null — use the source path
+/^\+\+\+ \/dev\/null/ {
+  if (src_path != "") {
+    if (!first_file) printf ","
+    printf "{\"path\":\"%s\",\"hunks\":[", src_path
+    first_file = 0
+    started_file = 1
+  }
+  next
+}
 
 # Hunk header: @@ -old_start[,old_count] +new_start[,new_count] @@
 /^@@ / {
@@ -139,6 +155,8 @@ in_hunk && /^\+/ {
   gsub(/"/, "\\\"", content)
   gsub(/\t/, "\\t", content)
   gsub(/\r/, "", content)
+  gsub(/\f/, "\\f", content)
+  gsub(/\b/, "\\b", content)
   if (!first_line) printf ","
   printf "{\"line\":%d,\"side\":\"RIGHT\",\"type\":\"added\",\"content\":\"%s\"}", new_line, content
   new_line++
@@ -153,6 +171,8 @@ in_hunk && /^-/ {
   gsub(/"/, "\\\"", content)
   gsub(/\t/, "\\t", content)
   gsub(/\r/, "", content)
+  gsub(/\f/, "\\f", content)
+  gsub(/\b/, "\\b", content)
   if (!first_line) printf ","
   printf "{\"line\":%d,\"side\":\"LEFT\",\"type\":\"removed\",\"content\":\"%s\"}", old_line, content
   old_line++
@@ -167,6 +187,8 @@ in_hunk && /^ / {
   gsub(/"/, "\\\"", content)
   gsub(/\t/, "\\t", content)
   gsub(/\r/, "", content)
+  gsub(/\f/, "\\f", content)
+  gsub(/\b/, "\\b", content)
   if (!first_line) printf ","
   printf "{\"line\":%d,\"side\":\"RIGHT\",\"type\":\"context\",\"content\":\"%s\"}", new_line, content
   old_line++
