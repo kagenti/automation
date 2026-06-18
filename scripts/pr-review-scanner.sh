@@ -13,7 +13,7 @@ source "$SCRIPT_DIR/program-lib.sh"
 
 # --- Configuration ---
 BOT_USER="clawgenti"
-REPOS=("kagenti/kagenti" "kagenti/kagenti-extensions")
+REPOS=("kagenti/kagenti" "kagenti/kagenti-extensions" "kagenti/automation" "kagenti/agent-skills")
 LABEL="ready-for-ai-review"
 REVIEW_MARKER="<!-- reviewed:"
 STALE_THRESHOLD_MIN=30
