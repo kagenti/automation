@@ -4,8 +4,8 @@ set -euo pipefail
 # Verifies pr-review-impact.sh classification: per-repo activation, aggregation,
 # median TTM in HOURS (1-decimal), and that a Dependabot PR clawgenti only
 # commented on is excluded.
-TMPDIR=$(mktemp -d)
-trap 'rm -rf "$TMPDIR"' EXIT
+TEST_TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TEST_TMPDIR"' EXIT
 
 # median TTM in hours, rounded to 1 decimal (mirrors the script's median_ttm).
 median_ttm() {
@@ -36,13 +36,13 @@ printf '%s\n' \
   '{"number":1,"createdAt":"2026-06-12T00:00:00Z","mergedAt":"2026-06-13T00:00:00Z"}' \
   '{"number":2,"createdAt":"2026-06-06T00:00:00Z","mergedAt":"2026-06-10T00:00:00Z"}' \
   '{"number":99,"createdAt":"2026-06-14T00:00:00Z","mergedAt":"2026-06-14T05:00:00Z"}' \
-  | mk "2026-06-13T00:00:00Z" '[1]' > "$TMPDIR/all.jsonl"
+  | mk "2026-06-13T00:00:00Z" '[1]' > "$TEST_TMPDIR/all.jsonl"
 
 # repo B: activation 2026-06-16, marked=[1].
 #   #1 reviewed created 06-15T00 merged 06-16T12 = 36h (createdAt 06-15<06-16 -> before)
 printf '%s\n' \
   '{"number":1,"createdAt":"2026-06-15T00:00:00Z","mergedAt":"2026-06-16T12:00:00Z"}' \
-  | mk "2026-06-16T00:00:00Z" '[1]' >> "$TMPDIR/all.jsonl"
+  | mk "2026-06-16T00:00:00Z" '[1]' >> "$TEST_TMPDIR/all.jsonl"
 
 # Expected over both repos:
 #   reviewed   = {A#1=24h, B#1=36h} -> median 30.0, count 2
@@ -51,13 +51,13 @@ printf '%s\n' \
 #   after  = {A#99 (06-14>=06-13)} count 1
 #   before = {A#1 (06-12<06-13), A#2, B#1 (06-15<06-16)} count 3
 
-reviewed_c=$(jq -c 'select(.reviewed==true)'  "$TMPDIR/all.jsonl" | jq -s 'length')
-unreviewed_c=$(jq -c 'select(.reviewed==false)' "$TMPDIR/all.jsonl" | jq -s 'length')
-dependabot_reviewed=$(jq -c 'select(.number==99 and .reviewed==true)' "$TMPDIR/all.jsonl" | jq -s 'length')
-reviewed_m=$(jq -c 'select(.reviewed==true)'  "$TMPDIR/all.jsonl" | median_ttm)
-unreviewed_m=$(jq -c 'select(.reviewed==false)' "$TMPDIR/all.jsonl" | median_ttm)
-after_c=$(jq -c 'select(.after_activation==true)'  "$TMPDIR/all.jsonl" | jq -s 'length')
-before_c=$(jq -c 'select(.after_activation==false)' "$TMPDIR/all.jsonl" | jq -s 'length')
+reviewed_c=$(jq -c 'select(.reviewed==true)'  "$TEST_TMPDIR/all.jsonl" | jq -s 'length')
+unreviewed_c=$(jq -c 'select(.reviewed==false)' "$TEST_TMPDIR/all.jsonl" | jq -s 'length')
+dependabot_reviewed=$(jq -c 'select(.number==99 and .reviewed==true)' "$TEST_TMPDIR/all.jsonl" | jq -s 'length')
+reviewed_m=$(jq -c 'select(.reviewed==true)'  "$TEST_TMPDIR/all.jsonl" | median_ttm)
+unreviewed_m=$(jq -c 'select(.reviewed==false)' "$TEST_TMPDIR/all.jsonl" | median_ttm)
+after_c=$(jq -c 'select(.after_activation==true)'  "$TEST_TMPDIR/all.jsonl" | jq -s 'length')
+before_c=$(jq -c 'select(.after_activation==false)' "$TEST_TMPDIR/all.jsonl" | jq -s 'length')
 
 fail=0
 [ "$reviewed_c" = "2" ]          || { echo "FAIL reviewed count: got $reviewed_c want 2"; fail=1; }
