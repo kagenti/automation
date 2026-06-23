@@ -22,7 +22,6 @@ source "$SCRIPT_DIR/program-lib.sh"
 # --- Configuration ---
 BOT_USER="clawgenti"
 REVIEW_MARKER="<!-- reviewed:"
-ORG="kagenti"
 LOOKBACK_LIMIT=200
 
 # get_repos -- emit the repos to measure, one "owner/name" per line.
@@ -34,7 +33,7 @@ LOOKBACK_LIMIT=200
 # token, but the property is currently unstamped (returns empty), so the
 # explicit list stays until #1811 lands:
 #
-#   gh_with_backoff api "orgs/$ORG/properties/values" \
+#   gh_with_backoff api "orgs/kagenti/properties/values" \
 #     --jq '.[] | select(.properties[]? | .property_name=="tier" and .value=="core") | .repository_full_name'
 #
 get_repos() {
@@ -91,14 +90,14 @@ fi
 
 # --- Workspace and reports setup ---
 setup_workspace "pr-review-impact"
-TMPDIR="$PROGRAM_TMPDIR"
+WORK_DIR="$PROGRAM_TMPDIR"
 REPORTS_DIR="${REPORTS_DIR:-./reports/pr-review}"
 mkdir -p "$REPORTS_DIR"
 
 SCAN_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-ALL_FILE="$TMPDIR/all.jsonl"                  # every merged PR, tagged reviewed + after_activation
-ACTIVATIONS_FILE="$TMPDIR/activations.jsonl"  # one {repo, activation} per repo with marked reviews
+ALL_FILE="$WORK_DIR/all.jsonl"                  # every merged PR, tagged reviewed + after_activation
+ACTIVATIONS_FILE="$WORK_DIR/activations.jsonl"  # one {repo, activation} per repo with marked reviews
 : > "$ALL_FILE"
 : > "$ACTIVATIONS_FILE"
 
@@ -115,7 +114,7 @@ while IFS= read -r repo; do
 
   # 1b. Confirm each candidate has a MARKED clawgenti review; collect its
   #     earliest submitted_at. Build the marked-number set and per-repo activation.
-  marked_file="$TMPDIR/marked_${repo//\//_}.txt"
+  marked_file="$WORK_DIR/marked_${repo//\//_}.txt"
   : > "$marked_file"
   activation=""
   while IFS= read -r n; do
@@ -177,20 +176,20 @@ median_ttm() {
 
 count_lines() { wc -l < "$1" 2>/dev/null | tr -d ' ' || echo "0"; }
 
-jq -c 'select(.reviewed == true)'  "$ALL_FILE" > "$TMPDIR/reviewed.jsonl"   || true
-jq -c 'select(.reviewed == false)' "$ALL_FILE" > "$TMPDIR/unreviewed.jsonl" || true
-jq -c 'select(.after_activation == false)' "$ALL_FILE" > "$TMPDIR/before.jsonl" || true
-jq -c 'select(.after_activation == true)'  "$ALL_FILE" > "$TMPDIR/after.jsonl"  || true
+jq -c 'select(.reviewed == true)'  "$ALL_FILE" > "$WORK_DIR/reviewed.jsonl"   || true
+jq -c 'select(.reviewed == false)' "$ALL_FILE" > "$WORK_DIR/unreviewed.jsonl" || true
+jq -c 'select(.after_activation == false)' "$ALL_FILE" > "$WORK_DIR/before.jsonl" || true
+jq -c 'select(.after_activation == true)'  "$ALL_FILE" > "$WORK_DIR/after.jsonl"  || true
 
-REVIEWED_COUNT=$(count_lines "$TMPDIR/reviewed.jsonl")
-UNREVIEWED_COUNT=$(count_lines "$TMPDIR/unreviewed.jsonl")
-BEFORE_COUNT=$(count_lines "$TMPDIR/before.jsonl")
-AFTER_COUNT=$(count_lines "$TMPDIR/after.jsonl")
+REVIEWED_COUNT=$(count_lines "$WORK_DIR/reviewed.jsonl")
+UNREVIEWED_COUNT=$(count_lines "$WORK_DIR/unreviewed.jsonl")
+BEFORE_COUNT=$(count_lines "$WORK_DIR/before.jsonl")
+AFTER_COUNT=$(count_lines "$WORK_DIR/after.jsonl")
 
-REVIEWED_TTM=$(median_ttm   < "$TMPDIR/reviewed.jsonl")
-UNREVIEWED_TTM=$(median_ttm < "$TMPDIR/unreviewed.jsonl")
-BEFORE_TTM=$(median_ttm     < "$TMPDIR/before.jsonl")
-AFTER_TTM=$(median_ttm      < "$TMPDIR/after.jsonl")
+REVIEWED_TTM=$(median_ttm   < "$WORK_DIR/reviewed.jsonl")
+UNREVIEWED_TTM=$(median_ttm < "$WORK_DIR/unreviewed.jsonl")
+BEFORE_TTM=$(median_ttm     < "$WORK_DIR/before.jsonl")
+AFTER_TTM=$(median_ttm      < "$WORK_DIR/after.jsonl")
 
 # Per-repo activation list for transparency in the report.
 ACTIVATIONS_JSON=$(jq -s '.' "$ACTIVATIONS_FILE" 2>/dev/null || echo "[]")
