@@ -75,8 +75,13 @@ Usage:
 Options:
   --verbose           Print diagnostics to stderr
   --dry-run           Compute and print impact.json to stdout; do not write
-  --reports-dir DIR   Where to write impact.json (default: $REPORTS_DIR or ./reports/pr-review)
+  --reports-dir DIR   Where to write impact.json (default: ./reports/pr-review,
+                      or $REPORTS_DIR if set in the environment)
   --help, -h          Show this help
+
+NOTES:
+  Each repo's merged-PR baseline is capped at the most recent 200 PRs
+  (LOOKBACK_LIMIT); repos with more merged PRs are truncated to that window.
 
 REPORTS:
   impact.json   Reviewed/unreviewed and before/after-activation median TTM,
