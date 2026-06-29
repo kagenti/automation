@@ -8,6 +8,8 @@ TEST_TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TEST_TMPDIR"' EXIT
 
 # median TTM in hours, rounded to 1 decimal (mirrors the script's median_ttm).
+# keep in sync with pr-review-impact.sh (median_ttm and the mk classifier are
+# reimplemented here, not sourced, so they can silently drift if edited there).
 median_ttm() {
   jq -s '
     [.[] |

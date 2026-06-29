@@ -145,6 +145,10 @@ while IFS= read -r repo; do
   # 1c. Fetch merged PRs; tag reviewed (number in marked set) and after_activation
   #     (createdAt >= activation; null when no activation). The marked numbers are
   #     passed to jq as a JSON array.
+  # Note: the split is on createdAt, and activation is the earliest marked-review
+  #     submitted_at, so the PR that *defines* activation (created before its own
+  #     review) falls in before_activation. That is intentional — these buckets
+  #     measure the period, not the PR; the reviewed/unreviewed split is the per-PR view.
   marked_json=$(jq -R 'select(length>0)|tonumber' "$marked_file" 2>/dev/null | jq -s '.' || echo "[]")
   gh_with_backoff pr list --repo "$repo" \
     --state merged \
